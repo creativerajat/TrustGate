@@ -258,7 +258,7 @@ surrounding architecture (Principle P7).
 | M1 | Conference UI / deterministic demo (mock data, three panels) | **Complete** |
 | M2 | API boundary (`POST /ask`, `GET /health`, request validation) | **Complete** |
 | M3 | Retrieval + provenance + untrusted-data boundary | **Complete** |
-| M4 | Real LLM integration | **Pending** |
+| M4 | Real LLM integration | **In progress** (M4A + M4A.1 complete) |
 | M5 | Adversarial prompt-injection scenarios | Pending |
 | M6 | Policy enforcement and output security | Pending |
 | M7 | Security observability / audit | Pending |
@@ -267,65 +267,71 @@ surrounding architecture (Principle P7).
 
 ### M4 design guardrail (summary — full spec in §7)
 
-M4 introduces a real model (Anthropic) behind a provider abstraction, configured
-by environment variables, without weakening the M3 trust boundary. See §7 for the
-complete pre-implementation specification (provider architecture, model
-configuration, credential handling, cost control, incremental sub-milestones,
-experimental control, and demo reliability/fallback). **No M4 code exists yet.**
+M4 introduces a real runtime model behind a provider abstraction, configured
+by environment variables, without weakening the M3 trust boundary. Local
+development defaults to **Ollama**; **Anthropic** remains optional. See §7.
 
 ---
 
-## 7. M4 — Runtime LLM Architecture (Pre-Implementation Spec)
+## 7. M4 — Runtime LLM Architecture
 
-This section specifies M4 *before* any LLM code is written. It exists so the
-runtime LLM integration is architected deliberately rather than emerging ad hoc.
-Nothing in this section is implemented yet — `main.py` remains M3 (deterministic,
-no external LLM, runnable without `ANTHROPIC_API_KEY`).
+TrustGate M4 integrates a real runtime LLM on top of the M3 security pipeline
+without replacing retrieval, provenance, trust classification, policy inspection,
+fail-closed blocking, or audit observability.
 
 > **Terminology note:** the models available inside Cursor (e.g. Sonnet 5 High,
 > Opus 5 High, GPT-5.6 Sol Medium, Grok 4.5 High Fast, Composer 2.5 Fast) are
-> coding/agent models used to *develop* TrustGate. They are **not** the runtime
-> model TrustGate calls at request time. TrustGate's runtime model selection is
-> independent, application-level, and configured as described below.
+> **coding/agent models used to develop TrustGate.** They are **not** the runtime
+> model TrustGate calls at request time. TrustGate's runtime provider and model
+> are selected independently via environment configuration (`TRUSTGATE_LLM_PROVIDER`,
+> `TRUSTGATE_LLM_MODEL`).
 
 ### 7.1 Runtime LLM Provider
 
 ```text
 Application (main.py business logic)
   ↓
-LLM Provider abstraction        (interface — no provider-specific code above this line)
+LLMProvider abstraction        (interface — no provider-specific code above this line)
   ↓
-Anthropic provider               (one concrete implementation of the interface)
-  ↓
-configured runtime model         (TRUSTGATE_LLM_MODEL, see §7.2)
+OllamaProvider  |  AnthropicProvider
+  ↓                    ↓
+local Ollama         Anthropic API
+(localhost:11434)    (ANTHROPIC_API_KEY)
+  ↓                    ↓
+configured runtime model (TRUSTGATE_LLM_MODEL, see §7.2)
 ```
 
-Conceptual interface (not yet implemented):
+Interface (implemented in `llm_provider.py`):
 
 ```text
 LLMProvider
-  └── generate(system_prompt, user_prompt_or_context) -> text
+  └── generate(system_prompt, user_prompt) -> GenerateResult
+
+OllamaProvider(LLMProvider)
+  └── HTTP chat API to OLLAMA_BASE_URL (default http://localhost:11434)
 
 AnthropicProvider(LLMProvider)
-  └── calls the Anthropic API using the configured runtime model
+  └── Anthropic Messages API using TRUSTGATE_LLM_MODEL
 ```
 
-Business logic (`run_ask_pipeline` and the guarded/unguarded builders) must call
-only the `LLMProvider` interface. No Anthropic-specific types, imports, or
-request/response shapes may appear outside the provider implementation. This
-keeps the M3 trust-boundary logic (retrieval, provenance, context construction,
-policy inspection, audit) provider-agnostic, satisfying Principle P7.
+Business logic (`run_ask_pipeline`, guarded path) calls only `get_llm_provider()`
+and `LLMProvider.generate()`. Provider-specific SDK/HTTP code stays inside
+provider classes (Principle P7).
+
+**Provider selection:** `TRUSTGATE_LLM_PROVIDER` — `ollama` (default) or
+`anthropic`. Unknown values fail safely with a controlled provider-unavailable
+result; **no silent fallback** between providers.
 
 ### 7.2 Runtime Model Configuration
 
-- `TRUSTGATE_LLM_MODEL` is the single, application-level, environment-configured
-  runtime model name.
-- The model name MUST live in exactly one place (one constant/config read at
-  startup) — never scattered through business logic or duplicated as string
-  literals across functions.
-- A safe development placeholder value MAY exist as a default, but the effective
-  value at runtime MUST be overridable via environment configuration, not hardcoded
-  as the only option.
+- `TRUSTGATE_LLM_MODEL` is the single, application-level runtime model name
+  (defined once in `llm_provider.py`, overridable via environment).
+- Default model with default provider `ollama`: `llama3.2:3b` (small/local-friendly
+  for conference-demo development).
+- For Anthropic, set e.g. `TRUSTGATE_LLM_MODEL=claude-sonnet-5` in the environment.
+- The **same** configured provider/model pair must be used for both guarded and
+  unguarded paths when M4B lands — the architecture is the controlled variable,
+  not model capability (§7.6).
 
 ### 7.3 Credential Security
 
@@ -366,16 +372,26 @@ For the conference demo specifically:
 
 M4 is split into sub-milestones, each independently testable:
 
-| Sub-milestone | Scope |
-|---|---|
-| **M4A** | Provider abstraction (`LLMProvider`, `AnthropicProvider`) + a single benign LLM path (one guarded call, no comparison yet) |
-| **M4B** | Guarded vs. unguarded comparison using the real model on both paths |
-| **M4C** | Output validation and fail-closed behavior on real model output (replacing/augmenting the M3 deterministic block) |
-| **M4D** | Latency/cost/reliability hardening (timeouts, fallback behavior — see §7.7) |
+| Sub-milestone | Scope | Status |
+|---|---|---|
+| **M4A** | Provider abstraction (`LLMProvider`, `AnthropicProvider`) + single guarded benign LLM path | **Complete** |
+| **M4A.1** | Provider portability — `OllamaProvider`, env-driven provider selection, Ollama default for local dev | **Complete** |
+| **M4B** | Guarded vs. unguarded comparison using the real model on both paths | Pending |
+| **M4C** | Output validation and fail-closed behavior on real model output | Pending |
+| **M4D** | Latency/cost/reliability hardening (timeouts, fallback behavior — see §7.7) | Pending |
 
-**M4A MUST be completed and tested before M4B begins.** Do not implement the
-guarded/unguarded comparison and output validation in the same step as the
-initial provider wiring.
+**M4A.1 behavior (current):**
+
+- **Benign guarded path:** exactly **one** runtime LLM call (`LLMProvider.generate`).
+- **Malicious / threat detected:** **zero** LLM calls — block before provider.
+- **Unguarded path:** still simulated (M4B pending).
+- **Provider failure:** controlled `[PROVIDER UNAVAILABLE: …]` response; Engineer's
+  Log records provider, model, and fail-safe; no credential leakage; no crash.
+- **No cross-provider fallback** (e.g. Anthropic misconfiguration does not switch
+  to Ollama).
+
+**M4A MUST be completed before M4B begins.** Do not implement guarded/unguarded
+LLM comparison in the same step as initial provider wiring.
 
 ### 7.6 Experimental Control
 
@@ -419,9 +435,8 @@ configured timeout:
 - **M3** = deterministic security architecture simulation. No external LLM calls.
 - **M4** = real LLM integration, built on top of the M3 boundary without
   replacing it.
-- **M3 MUST remain runnable without an `ANTHROPIC_API_KEY`** — M4 must not make
-  the M3 deterministic path (or the app's basic startup/health check) depend on
-  the presence of a provider credential.
+- **M3 MUST remain runnable without an `ANTHROPIC_API_KEY`** — local development
+  defaults to Ollama; Anthropic is optional and requires explicit configuration.
 
 ---
 
@@ -431,7 +446,6 @@ This document is derived from, and must stay consistent with, `main.py` and
 `index.html`. If a future milestone changes the shape of `POST /ask` or the
 guarded/unguarded pipeline, update this file in the same change.
 
-As of this update, `main.py` implements M3 only. Section 7 (M4) is a
-pre-implementation specification with no corresponding code yet — do not treat
-`LLMProvider`, `AnthropicProvider`, `TRUSTGATE_LLM_MODEL`, or `ANTHROPIC_API_KEY`
-as implemented until M4A lands and this file is updated to reflect it.
+As of M4A.1, `main.py` implements the M3 security pipeline plus a guarded benign
+runtime LLM path via `LLMProvider` (`OllamaProvider` default, `AnthropicProvider`
+optional). M4B–M4D are not implemented.
