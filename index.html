@@ -288,6 +288,26 @@
         display: block;
       }
 
+      .blocked-badge.input-block {
+        border-color: var(--green);
+        background: rgba(61, 220, 132, 0.12);
+      }
+
+      .blocked-badge.output-block {
+        border-color: var(--amber);
+        background: rgba(255, 200, 87, 0.12);
+        color: var(--text);
+      }
+
+      .blocked-badge .badge-detail {
+        display: block;
+        margin-top: 0.5rem;
+        font-size: clamp(0.95rem, 1.4vw, 1.05rem);
+        font-weight: 600;
+        letter-spacing: normal;
+        color: var(--muted);
+      }
+
       .log-ok {
         font-size: clamp(1.2rem, 2vw, 1.5rem);
         font-weight: 700;
@@ -483,11 +503,7 @@ DOCUMENT ─────────→ LLM  <span class="warn">⚠ NO BOUNDARY<
           </div>
           <div class="panel-body">
             <div class="panel-meta" id="guarded-meta"></div>
-            <div class="blocked-badge" id="blocked-badge">
-              🛡️ BLOCKED<br />
-              UNTRUSTED CONTENT ATTEMPTED<br />
-              UNAUTHORIZED ACTION
-            </div>
+            <div class="blocked-badge" id="blocked-badge" hidden aria-live="polite"></div>
             <div class="response-text placeholder" id="guarded-out">
               Guarded response appears here.
             </div>
@@ -544,6 +560,42 @@ DOCUMENT ─────────→ LLM  <span class="warn">⚠ NO BOUNDARY<
         );
       }
 
+      function hideGuardedBlockedBadge() {
+        blockedBadge.classList.remove("visible", "input-block", "output-block");
+        blockedBadge.hidden = true;
+        blockedBadge.innerHTML = "";
+      }
+
+      function renderGuardedBlockedBadge(payload) {
+        if (!payload.guarded_blocked) {
+          hideGuardedBlockedBadge();
+          return;
+        }
+        var status =
+          payload.guarded_runtime && payload.guarded_runtime.status
+            ? payload.guarded_runtime.status
+            : "";
+        blockedBadge.hidden = false;
+        blockedBadge.classList.add("visible");
+        blockedBadge.classList.remove("input-block", "output-block");
+        if (status === "blocked_before_llm") {
+          blockedBadge.classList.add("input-block");
+          blockedBadge.innerHTML =
+            "🛡️ INPUT BLOCKED<br />Threat detected before LLM execution" +
+            '<span class="badge-detail">TrustGate blocked the request before the guarded LLM call.</span>';
+        } else if (status === "output_validation_blocked") {
+          blockedBadge.classList.add("output-block");
+          blockedBadge.innerHTML =
+            "🛡️ OUTPUT BLOCKED<br />Unsafe model output rejected" +
+            '<span class="badge-detail">TrustGate rejected the model output before exposing it as the guarded answer.</span>';
+        } else {
+          blockedBadge.classList.add("input-block");
+          blockedBadge.innerHTML =
+            "🛡️ GUARDED BLOCKED<br />Security control activated" +
+            '<span class="badge-detail">TrustGate blocked the guarded response.</span>';
+        }
+      }
+
       function useMaliciousDoc() {
         const checked = document.querySelector('input[name="doc"]:checked');
         return !!(checked && checked.value === "malicious");
@@ -584,7 +636,7 @@ DOCUMENT ─────────→ LLM  <span class="warn">⚠ NO BOUNDARY<
         unguardedEl.classList.add("placeholder");
         guardedEl.classList.add("placeholder");
         logEl.classList.add("placeholder");
-        blockedBadge.classList.remove("visible");
+        hideGuardedBlockedBadge();
         retrievalCard.hidden = true;
         unguardedMetaEl.textContent = "";
         guardedMetaEl.textContent = "";
@@ -616,9 +668,9 @@ DOCUMENT ─────────→ LLM  <span class="warn">⚠ NO BOUNDARY<
         }
 
         if (payload.guarded_blocked) {
-          blockedBadge.classList.add("visible");
+          renderGuardedBlockedBadge(payload);
         } else {
-          blockedBadge.classList.remove("visible");
+          hideGuardedBlockedBadge();
         }
 
         renderEngineerLog(payload.engineer_log);
@@ -634,7 +686,7 @@ DOCUMENT ─────────→ LLM  <span class="warn">⚠ NO BOUNDARY<
         unguardedEl.classList.add("placeholder");
         guardedEl.classList.add("placeholder");
         logEl.classList.add("placeholder");
-        blockedBadge.classList.remove("visible");
+        hideGuardedBlockedBadge();
       }
 
       runBtn.addEventListener("click", async function () {
