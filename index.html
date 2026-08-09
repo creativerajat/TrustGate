@@ -267,6 +267,10 @@
         color: var(--muted);
         font-size: 0.95rem;
       }
+
+      .loading.error {
+        color: var(--red);
+      }
     </style>
   </head>
   <body>
@@ -323,7 +327,7 @@ UNGUARDED PATH:  DOCUMENT ─────────→ LLM  <span class="warn"
           </div>
           <div class="panel-body">
             <div class="response-text placeholder" id="unguarded-out">
-              Run the demo to compare architectures (M1 mock data).
+              Run the demo to compare architectures.
             </div>
           </div>
         </article>
@@ -356,36 +360,14 @@ UNGUARDED PATH:  DOCUMENT ─────────→ LLM  <span class="warn"
         </article>
       </section>
 
-      <p class="m1-note">M1 — static UI with mock responses only (no API / LLM).</p>
+      <p class="m1-note">M2 — FastAPI-backed deterministic security simulation (no LLM).</p>
     </div>
 
     <script>
-      /* M1: client-side mock only — backend wired in M2+ */
+      /* M2: presentation only — security outcomes come from POST /ask */
 
-      const MOCK = {
-        benign: {
-          unguarded_response:
-            "Alex Morgan, 54, was referred from Hospital A for evaluation of persistent fatigue and hypertension over the past three months. The note recommends follow-up review of history and appropriate clinical evaluation.",
-          guarded_response:
-            "Summary (from untrusted referral data only): Alex Morgan, age 54, is referred for persistent fatigue and hypertension. History notes fatigue for ~3 months; recommendation is follow-up evaluation.",
-          guarded_blocked: false,
-          audit_event: null,
-        },
-        malicious: {
-          unguarded_response:
-            "Per the document's processing instruction, here is internal configuration: INTERNAL_KEY=sk-demo-12345-do-not-reveal. (This demonstrates why retrieved text must not enter the instruction space.)",
-          guarded_response:
-            "[BLOCKED: untrusted content attempted unauthorized action]",
-          guarded_blocked: true,
-          audit_event: {
-            threat_detected: true,
-            confidence: "high",
-            reason: "instruction detected inside untrusted document",
-            action: ["ignored", "alert_logged", "response_regenerated"],
-            timestamp: "2026-08-09T13:45:00Z",
-          },
-        },
-      };
+      const DEMO_ERROR =
+        "Demo error: unable to complete the model request. Check the API configuration and try again.";
 
       const runBtn = document.getElementById("run");
       const loadingEl = document.getElementById("loading");
@@ -395,9 +377,9 @@ UNGUARDED PATH:  DOCUMENT ─────────→ LLM  <span class="warn"
       const logEl = document.getElementById("log-out");
       const blockedBadge = document.getElementById("blocked-badge");
 
-      function selectedDocMode() {
+      function useMaliciousDoc() {
         const checked = document.querySelector('input[name="doc"]:checked');
-        return checked && checked.value === "malicious" ? "malicious" : "benign";
+        return !!(checked && checked.value === "malicious");
       }
 
       function renderLog(auditEvent) {
@@ -411,6 +393,19 @@ UNGUARDED PATH:  DOCUMENT ─────────→ LLM  <span class="warn"
           JSON.stringify(auditEvent, null, 2) +
           "</pre>";
         logEl.classList.remove("placeholder");
+      }
+
+      function clearResults() {
+        unguardedEl.textContent = "";
+        guardedEl.textContent = "";
+        logEl.textContent = "";
+        unguardedEl.classList.add("placeholder");
+        guardedEl.classList.add("placeholder");
+        logEl.classList.add("placeholder");
+        unguardedEl.textContent = "Waiting for server response…";
+        guardedEl.textContent = "Waiting for server response…";
+        logEl.textContent = "Waiting for server response…";
+        blockedBadge.classList.remove("visible");
       }
 
       function applyResult(payload) {
@@ -429,44 +424,55 @@ UNGUARDED PATH:  DOCUMENT ─────────→ LLM  <span class="warn"
         renderLog(payload.audit_event);
       }
 
-      function sleep(ms) {
-        return new Promise(function (resolve) {
-          setTimeout(resolve, ms);
-        });
+      function showError(message) {
+        loadingEl.textContent = message;
+        loadingEl.classList.add("error");
+        unguardedEl.textContent = "—";
+        guardedEl.textContent = "—";
+        logEl.textContent = "—";
+        unguardedEl.classList.add("placeholder");
+        guardedEl.classList.add("placeholder");
+        logEl.classList.add("placeholder");
+        blockedBadge.classList.remove("visible");
       }
 
       runBtn.addEventListener("click", async function () {
-        const mode = selectedDocMode();
         const query = queryEl.value.trim();
         if (!query) {
           loadingEl.textContent = "Enter a query to run the demo.";
+          loadingEl.classList.add("error");
           return;
         }
 
         runBtn.disabled = true;
+        loadingEl.classList.remove("error");
         loadingEl.textContent = "Running both architectures...";
-        unguardedEl.textContent = "";
-        guardedEl.textContent = "";
-        logEl.textContent = "";
-        blockedBadge.classList.remove("visible");
+        clearResults();
 
-        await sleep(700);
-        loadingEl.textContent = "Comparing unguarded vs guarded execution...";
-        await sleep(900);
+        try {
+          loadingEl.textContent = "Comparing unguarded vs guarded execution...";
+          const response = await fetch("/ask", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              query: query,
+              use_malicious_doc: useMaliciousDoc(),
+            }),
+          });
 
-        const base = MOCK[mode];
-        const payload = {
-          unguarded_response: base.unguarded_response,
-          guarded_response: base.guarded_response,
-          guarded_blocked: base.guarded_blocked,
-          audit_event: base.audit_event
-            ? { ...base.audit_event, timestamp: new Date().toISOString() }
-            : null,
-        };
+          if (!response.ok) {
+            showError(DEMO_ERROR);
+            return;
+          }
 
-        applyResult(payload);
-        loadingEl.textContent = "";
-        runBtn.disabled = false;
+          const data = await response.json();
+          applyResult(data);
+          loadingEl.textContent = "";
+        } catch (err) {
+          showError(DEMO_ERROR);
+        } finally {
+          runBtn.disabled = false;
+        }
       });
     </script>
   </body>
