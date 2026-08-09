@@ -271,6 +271,81 @@
       .loading.error {
         color: var(--red);
       }
+
+      .retrieval-card {
+        background: var(--surface);
+        border: 1px solid var(--border);
+        border-radius: 12px;
+        padding: 1rem 1.25rem;
+        margin-bottom: 1.25rem;
+        font-size: 1.05rem;
+      }
+
+      .retrieval-card h3 {
+        margin: 0 0 0.75rem;
+        font-size: 1.2rem;
+      }
+
+      .retrieval-grid {
+        display: grid;
+        grid-template-columns: repeat(auto-fit, minmax(12rem, 1fr));
+        gap: 0.35rem 1.5rem;
+      }
+
+      .retrieval-grid dt {
+        color: var(--muted);
+        font-weight: 600;
+      }
+
+      .retrieval-grid dd {
+        margin: 0 0 0.5rem;
+      }
+
+      details.doc-expand {
+        margin-top: 0.75rem;
+        font-size: 0.95rem;
+      }
+
+      details.doc-expand summary {
+        cursor: pointer;
+        color: var(--blue);
+        font-weight: 600;
+      }
+
+      .doc-expand pre {
+        margin-top: 0.5rem;
+        padding: 0.75rem;
+        background: #0a1018;
+        border: 1px solid var(--border);
+        border-radius: 8px;
+        white-space: pre-wrap;
+        font-size: 0.85rem;
+        max-height: 12rem;
+        overflow: auto;
+      }
+
+      .log-section {
+        margin-bottom: 1rem;
+      }
+
+      .log-section h3 {
+        margin: 0 0 0.35rem;
+        font-size: 0.95rem;
+        letter-spacing: 0.06em;
+        color: var(--blue);
+      }
+
+      .log-section p {
+        margin: 0.15rem 0;
+        font-size: 1rem;
+      }
+
+      .log-audit-label {
+        margin-top: 1rem;
+        font-size: 0.9rem;
+        color: var(--muted);
+        font-weight: 600;
+      }
     </style>
   </head>
   <body>
@@ -305,19 +380,37 @@
         </div>
       </section>
 
-      <pre class="arch-strip" aria-label="Architecture visualization"><span id="arch-viz">USER
+      <pre class="arch-strip" aria-label="Architecture visualization">GUARDED PATH
+USER → QUERY → RETRIEVER → RETRIEVED DOCUMENT
   ↓
-RETRIEVER
+┌─────────────────────────────┐
+│ TRUST BOUNDARY              │
+│ DATA ≠ INSTRUCTION          │
+│ trust_level = UNTRUSTED     │
+└─────────────────────────────┘
   ↓
-UNTRUSTED DOCUMENT
-  ↓
-┌────────────── TRUSTGATE ──────────────┐
-│ Policy → Prompt Boundary → LLM → Guard│
-│                         ↓              │
-│                       Audit            │
-└───────────────────────────────────────┘
+GUARDED AGENT
 
-UNGUARDED PATH:  DOCUMENT ─────────→ LLM  <span class="warn">⚠ no boundary</span></pre>
+UNGUARDED PATH
+DOCUMENT ─────────→ LLM  <span class="warn">⚠ NO BOUNDARY</span></pre>
+
+      <section class="retrieval-card" id="retrieval-card" hidden aria-label="Retrieved document">
+        <h3>Retrieved document</h3>
+        <dl class="retrieval-grid">
+          <dt>Document</dt>
+          <dd id="ret-doc-title">—</dd>
+          <dt>Source</dt>
+          <dd id="ret-source">—</dd>
+          <dt>Trust</dt>
+          <dd id="ret-trust">—</dd>
+          <dt>Retrieval</dt>
+          <dd id="ret-method">—</dd>
+        </dl>
+        <details class="doc-expand">
+          <summary>View retrieved document</summary>
+          <pre id="ret-content"></pre>
+        </details>
+      </section>
 
       <section class="panels" aria-label="Comparison output">
         <article class="panel red">
@@ -360,11 +453,11 @@ UNGUARDED PATH:  DOCUMENT ─────────→ LLM  <span class="warn"
         </article>
       </section>
 
-      <p class="m1-note">M2 — FastAPI-backed deterministic security simulation (no LLM).</p>
+      <p class="m1-note">M3 — Retrieval + provenance + explicit untrusted-data boundary (no LLM).</p>
     </div>
 
     <script>
-      /* M2: presentation only — security outcomes come from POST /ask */
+      /* M3: presentation only — all outcomes from POST /ask */
 
       const DEMO_ERROR =
         "Demo error: unable to complete the model request. Check the API configuration and try again.";
@@ -376,39 +469,60 @@ UNGUARDED PATH:  DOCUMENT ─────────→ LLM  <span class="warn"
       const guardedEl = document.getElementById("guarded-out");
       const logEl = document.getElementById("log-out");
       const blockedBadge = document.getElementById("blocked-badge");
+      const retrievalCard = document.getElementById("retrieval-card");
+      const retDocTitle = document.getElementById("ret-doc-title");
+      const retSource = document.getElementById("ret-source");
+      const retTrust = document.getElementById("ret-trust");
+      const retMethod = document.getElementById("ret-method");
+      const retContent = document.getElementById("ret-content");
 
       function useMaliciousDoc() {
         const checked = document.querySelector('input[name="doc"]:checked');
         return !!(checked && checked.value === "malicious");
       }
 
-      function renderLog(auditEvent) {
-        if (!auditEvent) {
-          logEl.innerHTML = '<div class="log-ok">✓ No threat detected</div>';
-          logEl.classList.remove("placeholder");
-          return;
+      function renderEngineerLog(engineerLog) {
+        let html = "";
+        engineerLog.sections.forEach(function (section) {
+          html += '<div class="log-section"><h3>' + section.title + "</h3>";
+          section.lines.forEach(function (line) {
+            html += "<p>" + line + "</p>";
+          });
+          html += "</div>";
+        });
+        if (engineerLog.audit_event) {
+          html +=
+            '<p class="log-audit-label">AUDIT EVENT (JSON)</p><pre class="log-json">' +
+            JSON.stringify(engineerLog.audit_event, null, 2) +
+            "</pre>";
         }
-        logEl.innerHTML =
-          '<pre class="log-json">' +
-          JSON.stringify(auditEvent, null, 2) +
-          "</pre>";
+        logEl.innerHTML = html;
         logEl.classList.remove("placeholder");
       }
 
+      function renderRetrieval(data) {
+        retrievalCard.hidden = false;
+        retDocTitle.textContent = data.retrieval.display_title;
+        retSource.textContent = data.retrieval.source;
+        retTrust.textContent = data.retrieval.trust_level;
+        retMethod.textContent = data.retrieval.retrieval_method;
+        retContent.textContent = data.retrieved_document_content || "";
+      }
+
       function clearResults() {
-        unguardedEl.textContent = "";
-        guardedEl.textContent = "";
-        logEl.textContent = "";
-        unguardedEl.classList.add("placeholder");
-        guardedEl.classList.add("placeholder");
-        logEl.classList.add("placeholder");
         unguardedEl.textContent = "Waiting for server response…";
         guardedEl.textContent = "Waiting for server response…";
         logEl.textContent = "Waiting for server response…";
+        unguardedEl.classList.add("placeholder");
+        guardedEl.classList.add("placeholder");
+        logEl.classList.add("placeholder");
         blockedBadge.classList.remove("visible");
+        retrievalCard.hidden = true;
       }
 
       function applyResult(payload) {
+        renderRetrieval(payload);
+
         unguardedEl.textContent = payload.unguarded_response;
         unguardedEl.classList.remove("placeholder");
 
@@ -421,7 +535,7 @@ UNGUARDED PATH:  DOCUMENT ─────────→ LLM  <span class="warn"
           blockedBadge.classList.remove("visible");
         }
 
-        renderLog(payload.audit_event);
+        renderEngineerLog(payload.engineer_log);
       }
 
       function showError(message) {
@@ -430,6 +544,7 @@ UNGUARDED PATH:  DOCUMENT ─────────→ LLM  <span class="warn"
         unguardedEl.textContent = "—";
         guardedEl.textContent = "—";
         logEl.textContent = "—";
+        retrievalCard.hidden = true;
         unguardedEl.classList.add("placeholder");
         guardedEl.classList.add("placeholder");
         logEl.classList.add("placeholder");

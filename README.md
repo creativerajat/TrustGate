@@ -2,7 +2,33 @@
 
 Educational conference demo: **Same Model. Different Architecture.** — showing how system design around an LLM affects whether untrusted retrieved content can influence behavior safely.
 
-**Milestone:** M2 (deterministic `POST /ask` — no LLM, no API key)
+**Milestone:** M3 (retrieval + provenance + explicit untrusted-data boundary — **no LLM**, no API key)
+
+## M3 architecture
+
+```text
+Retriever
+   ↓
+Provenance (document_id, source, trust_level, retrieved_at, …)
+   ↓
+UNTRUSTED DATA  (all retrieved content — benign or malicious)
+   ↓
+Trust boundary  (<untrusted_document> … DATA_ONLY …)
+   ↓
+┌─────────────────────┬──────────────────────┐
+│ UNGUARDED path      │ GUARDED path         │
+│ TRUSTED_BY_ERROR    │ policy inspect +     │
+│ no boundary         │ deterministic block  │
+└─────────────────────┴──────────────────────┘
+```
+
+**No LLM is used in M3.** Deterministic behavior validates the security architecture before introducing an actual model in later milestones.
+
+Retrieved external content is **UNTRUSTED because it is retrieved data**, not because it looks malicious. RAG does not automatically make retrieved content trustworthy.
+
+TrustGate demonstrates **Same Model. Different Architecture.** M0–M3 are fully deterministic and require no external LLM. M4 will introduce a real model (Anthropic) behind a small, swappable provider abstraction, configured via environment variables — never via committed credentials — and without weakening the M3 trust boundary.
+
+Full specification, architecture, requirements, threat model, ADRs, and roadmap: [`SPEC.md`](SPEC.md).
 
 ## Requirements
 
@@ -17,13 +43,9 @@ python -m pip install -r requirements.txt
 
 ## Run
 
-Use the same Python interpreter that installed dependencies:
-
 ```bash
 python -m uvicorn main:app --reload
 ```
-
-Do not rely on a standalone `uvicorn` on `PATH` if it points at a different Python version.
 
 - Application: [http://127.0.0.1:8000](http://127.0.0.1:8000)
 - Health: [http://127.0.0.1:8000/health](http://127.0.0.1:8000/health)
@@ -32,13 +54,7 @@ Do not rely on a standalone `uvicorn` on `PATH` if it points at a different Pyth
 
 ### `GET /health`
 
-```json
-{
-  "status": "ok",
-  "service": "TrustGate",
-  "version": "0.2.0-m2"
-}
-```
+Returns `status`, `service`, and `version` (`0.3.0-m3`).
 
 ### `POST /ask`
 
@@ -51,9 +67,14 @@ Request:
 }
 ```
 
-Response (benign): `guarded_blocked` is `false`, `audit_event` is `null`.
+Response includes:
 
-Response (malicious): guarded path returns a blocked message, `guarded_blocked` is `true`, and `audit_event` is populated.
+- `query` — echoed user query
+- `retrieval` — provenance metadata (`trust_level` is always `UNTRUSTED`)
+- `retrieved_document_content` — for expandable UI only (not logged in engineer’s log)
+- `unguarded_response`, `guarded_response`, `guarded_blocked`, `audit_event`
+- `security_boundary` — `{ "present": true, "type": "UNTRUSTED_DATA", "policy": "DATA_ONLY" }`
+- `engineer_log` — structured sections for the UI
 
 #### Example (PowerShell)
 
@@ -63,18 +84,6 @@ Invoke-RestMethod -Uri "http://127.0.0.1:8000/ask" -Method Post `
   -Body '{"query":"Can you summarize this patient''s referral for me?","use_malicious_doc":false}'
 ```
 
-```powershell
-Invoke-RestMethod -Uri "http://127.0.0.1:8000/ask" -Method Post `
-  -ContentType "application/json" `
-  -Body '{"query":"Can you summarize this patient''s referral for me?","use_malicious_doc":true}'
-```
-
-## UI (M2)
-
-The conference UI is unchanged visually. **RUN TRUSTGATE** calls `POST /ask` and renders the server response (unguarded panel, guarded panel, engineer's log, blocked badge).
-
-Later milestones add real documents in the pipeline, Anthropic integration, and TrustGate security controls.
-
 ## Disclaimer
 
-TrustGate is an educational conference demonstration. M2 uses deterministic mocks, not a live model.
+TrustGate is an educational conference demonstration. M3 uses a deterministic retriever and pattern-based instruction detection — not production-grade prompt-injection defense.
