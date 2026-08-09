@@ -49,6 +49,16 @@ behavior of the underlying LLM. The same model must remain safe because of
 architecture and controls — not merely because the model follows instructions
 correctly. ("Same Model. Different Architecture.")
 
+**P8 — Resource-aware design (cost never overrides security)**
+Priority order for every design decision, highest first: **security →
+correctness → reliability → latency → cost.** Cost and latency optimizations
+(e.g. avoiding unnecessary retries, extra model calls, or unnecessarily
+capable models) are applied only *after* security, correctness, and
+reliability requirements are satisfied — never as a substitute for them. Cost
+considerations MUST NOT be used to justify skipping trust classification,
+policy inspection, the guarded boundary, fail-closed blocking, or audit
+logging. See §7.4 for the full cost-control policy.
+
 ---
 
 ## 2. Architecture (current: M3)
@@ -99,12 +109,14 @@ an audit event.
 
 **Important distinction:** the `<untrusted_document>…</untrusted_document>`
 delimiter is a *representation* of the boundary, not the security mechanism by
-itself. The actual security architecture is enforced through policy inspection,
-context construction (`build_guarded_context` / `build_unguarded_context`),
-output validation, and audit logging around that representation. This distinction
-becomes load-bearing in M4: wrapping text in tags and sending it to a real LLM is
-necessary but not sufficient — the surrounding controls are what make the
-architecture safe.
+itself. The actual security mechanism is the combination of trust classification
+(`trust_level=UNTRUSTED`), provenance (`RetrievalMeta`), policy inspection
+(`inspect_untrusted_document`), context construction (`build_guarded_context` /
+`build_unguarded_context`), output validation/fail-closed blocking, and
+audit/observability (`create_audit_event`, `engineer_log`) — not the delimiter
+text alone. This distinction becomes load-bearing in M4: wrapping text in tags
+and sending it to a real LLM is necessary but not sufficient — the surrounding
+controls are what make the architecture safe.
 
 Current implementation mapping (`main.py`):
 
@@ -253,25 +265,173 @@ surrounding architecture (Principle P7).
 | M8 | Evaluation / attack benchmark | Pending |
 | M9 | Production architecture hardening | Pending |
 
-### M4 design guardrail (not yet implemented)
+### M4 design guardrail (summary — full spec in §7)
 
-M4 introduces a real model (Anthropic). Before/while implementing M4:
-
-- The model provider MUST be isolated behind a small provider abstraction
-  (e.g. `LLM Provider → model.generate(...)`), not embedded provider-specific
-  logic throughout the application.
-- The model name MUST be configurable (single constant, not scattered).
-- The API key MUST come from environment configuration — never hardcoded.
-- No secrets may enter source code, HTML, README, git history, logs, or audit
-  events.
-- M4 MUST NOT weaken the M3 trust boundary: `build_guarded_context`,
-  `inspect_untrusted_document`, fail-closed blocking, and audit logging must
-  continue to gate what reaches the guarded model call.
+M4 introduces a real model (Anthropic) behind a provider abstraction, configured
+by environment variables, without weakening the M3 trust boundary. See §7 for the
+complete pre-implementation specification (provider architecture, model
+configuration, credential handling, cost control, incremental sub-milestones,
+experimental control, and demo reliability/fallback). **No M4 code exists yet.**
 
 ---
 
-## 7. Consistency Notes
+## 7. M4 — Runtime LLM Architecture (Pre-Implementation Spec)
+
+This section specifies M4 *before* any LLM code is written. It exists so the
+runtime LLM integration is architected deliberately rather than emerging ad hoc.
+Nothing in this section is implemented yet — `main.py` remains M3 (deterministic,
+no external LLM, runnable without `ANTHROPIC_API_KEY`).
+
+> **Terminology note:** the models available inside Cursor (e.g. Sonnet 5 High,
+> Opus 5 High, GPT-5.6 Sol Medium, Grok 4.5 High Fast, Composer 2.5 Fast) are
+> coding/agent models used to *develop* TrustGate. They are **not** the runtime
+> model TrustGate calls at request time. TrustGate's runtime model selection is
+> independent, application-level, and configured as described below.
+
+### 7.1 Runtime LLM Provider
+
+```text
+Application (main.py business logic)
+  ↓
+LLM Provider abstraction        (interface — no provider-specific code above this line)
+  ↓
+Anthropic provider               (one concrete implementation of the interface)
+  ↓
+configured runtime model         (TRUSTGATE_LLM_MODEL, see §7.2)
+```
+
+Conceptual interface (not yet implemented):
+
+```text
+LLMProvider
+  └── generate(system_prompt, user_prompt_or_context) -> text
+
+AnthropicProvider(LLMProvider)
+  └── calls the Anthropic API using the configured runtime model
+```
+
+Business logic (`run_ask_pipeline` and the guarded/unguarded builders) must call
+only the `LLMProvider` interface. No Anthropic-specific types, imports, or
+request/response shapes may appear outside the provider implementation. This
+keeps the M3 trust-boundary logic (retrieval, provenance, context construction,
+policy inspection, audit) provider-agnostic, satisfying Principle P7.
+
+### 7.2 Runtime Model Configuration
+
+- `TRUSTGATE_LLM_MODEL` is the single, application-level, environment-configured
+  runtime model name.
+- The model name MUST live in exactly one place (one constant/config read at
+  startup) — never scattered through business logic or duplicated as string
+  literals across functions.
+- A safe development placeholder value MAY exist as a default, but the effective
+  value at runtime MUST be overridable via environment configuration, not hardcoded
+  as the only option.
+
+### 7.3 Credential Security
+
+- `ANTHROPIC_API_KEY` MUST come only from environment configuration.
+- Never:
+  - hardcode API keys in source
+  - put API keys in `index.html`
+  - put API keys in `README.md` / `SPEC.md`
+  - return API keys through any API response
+  - include API keys in `audit_event` or `engineer_log`
+  - log API keys (stdout, error messages, tracebacks)
+  - commit `.env` files containing real secrets (`.gitignore` already excludes
+    `.env*` except `.env.example`)
+
+### 7.4 Cost-Control Principle (Constitution P8)
+
+*"Optimize API cost before optimizing model capability — but never before
+security."* Priority order: **security → correctness → reliability → latency
+→ cost.** None of the cost-control measures below may be used to skip or
+weaken trust classification, the guarded boundary, policy inspection,
+fail-closed blocking, or audit logging.
+
+For the conference demo specifically:
+
+- Do not call expensive/high-capability models unnecessarily.
+- Use the **same** configured runtime model for both the guarded and unguarded
+  comparison so the architecture/trust-boundary remains the only controlled
+  experimental variable (see §7.6).
+- Avoid unnecessary retries.
+- Avoid unnecessary multi-agent or multi-call chains.
+- Avoid re-sending the same large context repeatedly where it can be avoided.
+- Keep prompts concise.
+- Keep retrieved documents small and deterministic (as established in M3).
+- Do not introduce embeddings, vector databases, additional agents, or extra LLM
+  calls unless they materially improve the demo's ability to make its point.
+
+### 7.5 M4 Incremental Implementation
+
+M4 is split into sub-milestones, each independently testable:
+
+| Sub-milestone | Scope |
+|---|---|
+| **M4A** | Provider abstraction (`LLMProvider`, `AnthropicProvider`) + a single benign LLM path (one guarded call, no comparison yet) |
+| **M4B** | Guarded vs. unguarded comparison using the real model on both paths |
+| **M4C** | Output validation and fail-closed behavior on real model output (replacing/augmenting the M3 deterministic block) |
+| **M4D** | Latency/cost/reliability hardening (timeouts, fallback behavior — see §7.7) |
+
+**M4A MUST be completed and tested before M4B begins.** Do not implement the
+guarded/unguarded comparison and output validation in the same step as the
+initial provider wiring.
+
+### 7.6 Experimental Control
+
+*"Same model, same user query, same retrieved document. The primary experimental
+variable is the architecture/trust boundary."*
+
+- The model MUST NOT change between the guarded and unguarded paths.
+- The guarded path MUST NOT use a more capable (or otherwise different) model
+  than the unguarded path, and vice versa — using a stronger model on the
+  guarded side would confound the experiment and misattribute the model's
+  capability, rather than the architecture, for any safety difference observed.
+- **Unguarded:** query + retrieved document are treated as instruction/trusted
+  context (per `build_unguarded_context`, `boundary=NONE`) when sent to the model.
+- **Guarded:** query + retrieved document are explicitly treated as untrusted data
+  (per `build_guarded_context`, `boundary=DATA_ONLY`) when sent to the model.
+- Any observed difference in behavior between the two panels must be attributable
+  to the architecture around the model, not to a different model, prompt
+  unrelated to the boundary, or inconsistent input.
+
+### 7.7 Demo Reliability (LLM failure fallback)
+
+The conference demo MUST have a deterministic fallback for LLM failures. If the
+external provider is unavailable, times out, rejects the request, or exceeds a
+configured timeout:
+
+- Do not crash the application.
+- Do not expose provider credentials or raw provider error bodies.
+- Return a controlled error/fallback state to the UI (consistent with the M2
+  error-handling pattern already in `index.html` / `HTTPException` in `main.py`).
+- Preserve the Engineer's Log.
+- Preserve the security-boundary explanation (`security_boundary` fields must
+  still describe the architecture even if the model call failed).
+- The fallback response MUST NOT claim that a real LLM security decision occurred
+  when it did not — it must be visibly distinguishable from a genuine guarded/
+  unguarded model response (e.g. explicit "provider unavailable" state, not a
+  silently substituted deterministic answer presented as if the model produced
+  it).
+
+### 7.8 Explicit M3 / M4 Boundary
+
+- **M3** = deterministic security architecture simulation. No external LLM calls.
+- **M4** = real LLM integration, built on top of the M3 boundary without
+  replacing it.
+- **M3 MUST remain runnable without an `ANTHROPIC_API_KEY`** — M4 must not make
+  the M3 deterministic path (or the app's basic startup/health check) depend on
+  the presence of a provider credential.
+
+---
+
+## 8. Consistency Notes
 
 This document is derived from, and must stay consistent with, `main.py` and
 `index.html`. If a future milestone changes the shape of `POST /ask` or the
 guarded/unguarded pipeline, update this file in the same change.
+
+As of this update, `main.py` implements M3 only. Section 7 (M4) is a
+pre-implementation specification with no corresponding code yet — do not treat
+`LLMProvider`, `AnthropicProvider`, `TRUSTGATE_LLM_MODEL`, or `ANTHROPIC_API_KEY`
+as implemented until M4A lands and this file is updated to reflect it.
