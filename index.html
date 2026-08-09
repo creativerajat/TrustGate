@@ -209,6 +209,51 @@
         font-size: 1rem;
       }
 
+      .panel-head .boundary-tag {
+        display: inline-block;
+        margin-top: 0.5rem;
+        padding: 0.25rem 0.55rem;
+        border-radius: 6px;
+        font-size: 0.85rem;
+        font-weight: 700;
+        letter-spacing: 0.04em;
+      }
+
+      .boundary-tag.none {
+        background: rgba(255, 77, 77, 0.15);
+        color: var(--red);
+        border: 1px solid var(--red);
+      }
+
+      .boundary-tag.data-only {
+        background: rgba(61, 220, 132, 0.12);
+        color: var(--green);
+        border: 1px solid var(--green);
+      }
+
+      .panel-meta {
+        font-size: 0.95rem;
+        color: var(--muted);
+        margin-bottom: 0.75rem;
+        line-height: 1.4;
+      }
+
+      .injection-note {
+        display: none;
+        margin-bottom: 0.75rem;
+        padding: 0.65rem 0.75rem;
+        border-radius: 8px;
+        border: 1px solid var(--amber);
+        background: rgba(255, 200, 87, 0.1);
+        color: var(--amber);
+        font-size: 0.95rem;
+        font-weight: 600;
+      }
+
+      .injection-note.visible {
+        display: block;
+      }
+
       .panel-body {
         padding: 1rem 1.1rem 1.25rem;
         flex: 1;
@@ -416,9 +461,14 @@ DOCUMENT ─────────→ LLM  <span class="warn">⚠ NO BOUNDARY<
         <article class="panel red">
           <div class="panel-head">
             <h2>🔴 UNGUARDED AGENT</h2>
-            <p class="hint">Retrieved content treated as trusted</p>
+            <p class="hint">Retrieved content treated as trusted — no security inspection</p>
+            <span class="boundary-tag none">NO TRUST BOUNDARY</span>
           </div>
           <div class="panel-body">
+            <div class="panel-meta" id="unguarded-meta"></div>
+            <div class="injection-note" id="unguarded-injection-note">
+              Injection was present in retrieved content. Response below is from the real runtime model.
+            </div>
             <div class="response-text placeholder" id="unguarded-out">
               Run the demo to compare architectures.
             </div>
@@ -428,9 +478,11 @@ DOCUMENT ─────────→ LLM  <span class="warn">⚠ NO BOUNDARY<
         <article class="panel green">
           <div class="panel-head">
             <h2>🟢 GUARDED AGENT</h2>
-            <p class="hint">Untrusted-data boundary + policy controls</p>
+            <p class="hint">Policy inspect → DATA_ONLY boundary → runtime LLM</p>
+            <span class="boundary-tag data-only">DATA-ONLY BOUNDARY</span>
           </div>
           <div class="panel-body">
+            <div class="panel-meta" id="guarded-meta"></div>
             <div class="blocked-badge" id="blocked-badge">
               🛡️ BLOCKED<br />
               UNTRUSTED CONTENT ATTEMPTED<br />
@@ -445,7 +497,7 @@ DOCUMENT ─────────→ LLM  <span class="warn">⚠ NO BOUNDARY<
         <article class="panel blue">
           <div class="panel-head">
             <h2>🔵 ENGINEER'S LOG</h2>
-            <p class="hint">Observable security controls</p>
+            <p class="hint">Same model · same query · same document · different architecture</p>
           </div>
           <div class="panel-body">
             <div id="log-out" class="placeholder">Audit and policy events appear here.</div>
@@ -453,7 +505,7 @@ DOCUMENT ─────────→ LLM  <span class="warn">⚠ NO BOUNDARY<
         </article>
       </section>
 
-      <p class="m1-note">M4A.1 — Runtime LLM via Ollama (default) or Anthropic; guarded benign path only until M4B.</p>
+      <p class="m1-note">M4C — Guarded path validates model output (fail-closed); unguarded remains raw model output.</p>
     </div>
 
     <script>
@@ -475,6 +527,22 @@ DOCUMENT ─────────→ LLM  <span class="warn">⚠ NO BOUNDARY<
       const retTrust = document.getElementById("ret-trust");
       const retMethod = document.getElementById("ret-method");
       const retContent = document.getElementById("ret-content");
+
+      const unguardedMetaEl = document.getElementById("unguarded-meta");
+      const guardedMetaEl = document.getElementById("guarded-meta");
+      const unguardedInjectionNote = document.getElementById("unguarded-injection-note");
+
+      function formatRuntimeMeta(runtime) {
+        if (!runtime) return "";
+        return (
+          "Model: " +
+          runtime.model +
+          " · Calls: " +
+          runtime.calls +
+          " · " +
+          runtime.status.replace(/_/g, " ")
+        );
+      }
 
       function useMaliciousDoc() {
         const checked = document.querySelector('input[name="doc"]:checked');
@@ -518,6 +586,9 @@ DOCUMENT ─────────→ LLM  <span class="warn">⚠ NO BOUNDARY<
         logEl.classList.add("placeholder");
         blockedBadge.classList.remove("visible");
         retrievalCard.hidden = true;
+        unguardedMetaEl.textContent = "";
+        guardedMetaEl.textContent = "";
+        unguardedInjectionNote.classList.remove("visible");
       }
 
       function applyResult(payload) {
@@ -525,9 +596,24 @@ DOCUMENT ─────────→ LLM  <span class="warn">⚠ NO BOUNDARY<
 
         unguardedEl.textContent = payload.unguarded_response;
         unguardedEl.classList.remove("placeholder");
-
         guardedEl.textContent = payload.guarded_response;
         guardedEl.classList.remove("placeholder");
+
+        if (payload.unguarded_runtime) {
+          unguardedMetaEl.textContent = formatRuntimeMeta(payload.unguarded_runtime);
+        }
+        if (payload.guarded_runtime) {
+          guardedMetaEl.textContent = formatRuntimeMeta(payload.guarded_runtime);
+        }
+
+        if (
+          payload.unguarded_runtime &&
+          payload.unguarded_runtime.attack_attempted
+        ) {
+          unguardedInjectionNote.classList.add("visible");
+        } else {
+          unguardedInjectionNote.classList.remove("visible");
+        }
 
         if (payload.guarded_blocked) {
           blockedBadge.classList.add("visible");

@@ -376,22 +376,86 @@ M4 is split into sub-milestones, each independently testable:
 |---|---|---|
 | **M4A** | Provider abstraction (`LLMProvider`, `AnthropicProvider`) + single guarded benign LLM path | **Complete** |
 | **M4A.1** | Provider portability — `OllamaProvider`, env-driven provider selection, Ollama default for local dev | **Complete** |
-| **M4B** | Guarded vs. unguarded comparison using the real model on both paths | Pending |
-| **M4C** | Output validation and fail-closed behavior on real model output | Pending |
+| **M4B** | Guarded vs. unguarded comparison using the real model on both paths | **Complete** |
+| **M4C** | Deterministic post-generation output validation + fail-closed guarded responses | **Complete** |
 | **M4D** | Latency/cost/reliability hardening (timeouts, fallback behavior — see §7.7) | Pending |
 
-**M4A.1 behavior (current):**
+**M4A.1 behavior:**
 
 - **Benign guarded path:** exactly **one** runtime LLM call (`LLMProvider.generate`).
-- **Malicious / threat detected:** **zero** LLM calls — block before provider.
-- **Unguarded path:** still simulated (M4B pending).
+- **Malicious / threat detected (guarded):** **zero** guarded LLM calls — block before provider.
+- **Unguarded path:** real runtime LLM (M4B); **no** `inspect_untrusted_document()` gate before the unguarded call.
 - **Provider failure:** controlled `[PROVIDER UNAVAILABLE: …]` response; Engineer's
   Log records provider, model, and fail-safe; no credential leakage; no crash.
 - **No cross-provider fallback** (e.g. Anthropic misconfiguration does not switch
   to Ollama).
 
-**M4A MUST be completed before M4B begins.** Do not implement guarded/unguarded
-LLM comparison in the same step as initial provider wiring.
+### 7.9 M4B — Same Model, Different Architecture (Complete)
+
+**Objective:** Demonstrate the conference claim experimentally:
+
+    SAME QUERY + SAME DOCUMENT + SAME MODEL + DIFFERENT ARCHITECTURE
+
+**Experimental controls:**
+
+| Control | Requirement |
+|---|---|
+| Same query | Exact `POST /ask` query string used for both paths |
+| Same document | Single `retrieve_document()` result shared by both paths |
+| Same model | Both paths use `get_llm_provider()` + `resolve_runtime_llm_config()` |
+
+**Unguarded architecture (intentionally insecure):**
+
+```text
+retrieve_document → build_unguarded_context → runtime LLM
+```
+
+No policy inspection gate before the unguarded LLM call.
+
+**Guarded architecture (M4C):**
+
+```text
+retrieve_document → inspect_untrusted_document
+                         ↓ threat?
+                    yes → BLOCK (0 LLM calls)
+                    no  → build_guarded_context → runtime LLM → output validation → allow/block
+```
+
+**M4B / M4C boundary:**
+
+- M4B compares architectures using real model output on both paths where allowed.
+- **M4C (complete):** deterministic post-generation `validate_guarded_output()` on the
+  guarded path only — fail-closed; no LLM judge; demo-grade, not production output security.
+- Unguarded path remains raw model output (no output validator in M4C).
+
+### 7.10 M4C — Post-Generation Output Validation (Complete)
+
+**Objective:** Demonstrate that guarded architecture validates **model output**, not only input context.
+
+```text
+retrieve → provenance → inspect → trust boundary → LLM → output validation → allow/block → audit
+```
+
+**Validator:** `output_validation.validate_guarded_output()` — deterministic pattern checks:
+
+| Reason code | Meaning |
+|---|---|
+| `allowed` | Output passed validation |
+| `empty_output` | Empty/whitespace model text |
+| `provider_failure` | Provider-unavailable text (not a successful answer) |
+| `secret_leak` | Demo secret markers detected |
+| `instruction_leak` | Obvious internal prompt/instruction disclosure |
+| `policy_violation` | Document-style injection echoed as authoritative |
+| `blocked_before_llm` | Validation not performed (input blocked first) |
+
+**Fail-closed:** Failed validation returns `[BLOCKED: guarded output failed security validation.]`
+— raw model output is not exposed. Engineer's Log uses safe reason labels only (no secret text).
+
+**Call budget unchanged from M4B** (no additional LLM calls).
+
+**M4C / M4D boundary:** M4D covers reliability/latency/cost hardening — not implemented.
+
+**M4A MUST be completed before M4B begins.** M4B builds on M4A.1 provider portability.
 
 ### 7.6 Experimental Control
 
@@ -446,6 +510,5 @@ This document is derived from, and must stay consistent with, `main.py` and
 `index.html`. If a future milestone changes the shape of `POST /ask` or the
 guarded/unguarded pipeline, update this file in the same change.
 
-As of M4A.1, `main.py` implements the M3 security pipeline plus a guarded benign
-runtime LLM path via `LLMProvider` (`OllamaProvider` default, `AnthropicProvider`
-optional). M4B–M4D are not implemented.
+As of M4C, `main.py` implements M3–M4B plus **deterministic guarded output validation**
+(`output_validation.py`). M4D is not implemented.

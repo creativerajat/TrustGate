@@ -2,7 +2,7 @@
 
 Educational conference demo: **Same Model. Different Architecture.** — showing how system design around an LLM affects whether untrusted retrieved content can influence behavior safely.
 
-**Milestone:** M4A.1 (runtime LLM via swappable provider — **Ollama default** for local dev; guarded benign path only until M4B)
+**Milestone:** M4C (deterministic **post-generation output validation** on the guarded path — fail-closed, demo-grade)
 
 ## M3 architecture
 
@@ -86,7 +86,9 @@ python -m uvicorn main:app --reload
 
 ### `GET /health`
 
-Returns `status`, `service`, `version` (`0.4.1-m4a1`), and non-sensitive runtime config (`provider`, `model`). No LLM call is made.
+Returns `status`, `service`, `version` (`0.6.0-m4c`), and non-sensitive runtime config (`provider`, `model`). No LLM call is made.
+
+`POST /ask` also returns `experiment`, `unguarded_runtime`, `guarded_runtime`, and `output_validation` metadata. Guarded answers pass through deterministic output validation after the model responds; failures are blocked fail-closed (raw model text is not returned). This validator is **demo-grade**, not production output security.
 
 ### `POST /ask`
 
