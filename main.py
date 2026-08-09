@@ -15,8 +15,8 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse
 from llm_provider import (
     PROVIDER_UNAVAILABLE_USER_MESSAGE,
-    TRUSTGATE_LLM_MODEL,
     get_llm_provider,
+    resolve_runtime_llm_config,
     runtime_llm_public_config,
 )
 from pydantic import BaseModel, field_validator
@@ -367,10 +367,11 @@ def invoke_guarded_benign_llm(
     user_prompt = build_guarded_llm_user_prompt(query, guarded_ctx)
     result = provider.generate(GUARDED_LLM_SYSTEM_PROMPT, user_prompt)
 
+    runtime_cfg = resolve_runtime_llm_config()
     provider_name = provider.provider_display_name
     log_lines = [
         f"Provider: {provider_name}",
-        f"Model: {TRUSTGATE_LLM_MODEL}",
+        f"Model: {runtime_cfg.model}",
         "Path: guarded / benign only",
     ]
 

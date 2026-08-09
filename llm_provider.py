@@ -6,23 +6,16 @@ from __future__ import annotations
 
 import json
 import os
+import sys
 import urllib.error
 import urllib.request
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
 from typing import Final
 
-# Provider selection (default: local Ollama for development without Anthropic credentials).
-TRUSTGATE_LLM_PROVIDER: Final[str] = (
-    os.environ.get("TRUSTGATE_LLM_PROVIDER", "ollama").strip().lower()
-)
-
-# Single configuration point for the runtime model (overridable via environment).
-TRUSTGATE_LLM_MODEL: Final[str] = os.environ.get("TRUSTGATE_LLM_MODEL", "llama3.2:3b")
-
-OLLAMA_BASE_URL: Final[str] = (
-    os.environ.get("OLLAMA_BASE_URL", "http://localhost:11434").strip().rstrip("/")
-)
+_DEFAULT_LLM_PROVIDER: Final[str] = "ollama"
+_DEFAULT_LLM_MODEL: Final[str] = "llama3.2:3b"
+_DEFAULT_OLLAMA_BASE_URL: Final[str] = "http://localhost:11434"
 
 _OLLAMA_REQUEST_TIMEOUT_SEC: Final[float] = 120.0
 
@@ -30,6 +23,34 @@ PROVIDER_UNAVAILABLE_USER_MESSAGE = (
     "[PROVIDER UNAVAILABLE: no real model decision was produced. "
     "The runtime LLM could not be reached or is not configured.]"
 )
+
+
+@dataclass(frozen=True)
+class RuntimeLLMConfig:
+    """Authoritative runtime LLM settings resolved from the process environment."""
+
+    provider: str
+    model: str
+    ollama_base_url: str
+
+
+def resolve_runtime_llm_config() -> RuntimeLLMConfig:
+    """
+    Read TRUSTGATE_LLM_PROVIDER, TRUSTGATE_LLM_MODEL, and OLLAMA_BASE_URL from
+    the current process environment on each call (not at import time).
+    """
+    provider = (
+        os.environ.get("TRUSTGATE_LLM_PROVIDER", _DEFAULT_LLM_PROVIDER).strip().lower()
+    )
+    model = os.environ.get("TRUSTGATE_LLM_MODEL", _DEFAULT_LLM_MODEL)
+    ollama_base_url = (
+        os.environ.get("OLLAMA_BASE_URL", _DEFAULT_OLLAMA_BASE_URL).strip().rstrip("/")
+    )
+    return RuntimeLLMConfig(
+        provider=provider,
+        model=model,
+        ollama_base_url=ollama_base_url,
+    )
 
 
 @dataclass(frozen=True)
@@ -179,16 +200,40 @@ class MisconfiguredProvider(LLMProvider):
 
 
 def get_llm_provider() -> LLMProvider:
-    if TRUSTGATE_LLM_PROVIDER == "ollama":
-        return OllamaProvider(model=TRUSTGATE_LLM_MODEL, base_url=OLLAMA_BASE_URL)
-    if TRUSTGATE_LLM_PROVIDER == "anthropic":
-        return AnthropicProvider(model=TRUSTGATE_LLM_MODEL)
-    return MisconfiguredProvider(TRUSTGATE_LLM_PROVIDER)
+    cfg = resolve_runtime_llm_config()
+    if cfg.provider == "ollama":
+        return OllamaProvider(model=cfg.model, base_url=cfg.ollama_base_url)
+    if cfg.provider == "anthropic":
+        return AnthropicProvider(model=cfg.model)
+    return MisconfiguredProvider(cfg.provider)
 
 
 def runtime_llm_public_config() -> dict[str, str]:
     """Non-sensitive runtime LLM settings for /health and observability."""
+    cfg = resolve_runtime_llm_config()
     return {
-        "provider": TRUSTGATE_LLM_PROVIDER,
-        "model": TRUSTGATE_LLM_MODEL,
+        "provider": cfg.provider,
+        "model": cfg.model,
     }
+
+
+def _runtime_config_self_check() -> int:
+    """
+    Deterministic check that environment overrides are honored at resolution time.
+
+    Usage:
+      TRUSTGATE_LLM_PROVIDER=ollama TRUSTGATE_LLM_MODEL=qwen3:4b python -m llm_provider
+    """
+    cfg = resolve_runtime_llm_config()
+    expected_provider = (
+        os.environ.get("TRUSTGATE_LLM_PROVIDER", _DEFAULT_LLM_PROVIDER).strip().lower()
+    )
+    expected_model = os.environ.get("TRUSTGATE_LLM_MODEL", _DEFAULT_LLM_MODEL)
+    if cfg.provider != expected_provider or cfg.model != expected_model:
+        return 1
+    print(json.dumps({"provider": cfg.provider, "model": cfg.model}))
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(_runtime_config_self_check())
