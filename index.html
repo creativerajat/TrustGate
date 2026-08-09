@@ -1,0 +1,473 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>TrustGate — Same Model. Different Architecture.</title>
+    <style>
+      :root {
+        --bg: #0b0f14;
+        --surface: #121820;
+        --text: #e8eef7;
+        --muted: #9aa8bc;
+        --red: #ff4d4d;
+        --green: #3ddc84;
+        --blue: #4da3ff;
+        --amber: #ffc857;
+        --border: #2a3544;
+      }
+
+      * {
+        box-sizing: border-box;
+      }
+
+      body {
+        margin: 0;
+        min-height: 100vh;
+        font-family: "Segoe UI", system-ui, -apple-system, sans-serif;
+        font-size: 1.125rem;
+        line-height: 1.5;
+        color: var(--text);
+        background: var(--bg);
+      }
+
+      .wrap {
+        max-width: 1600px;
+        margin: 0 auto;
+        padding: 1.5rem 1.25rem 2.5rem;
+      }
+
+      header {
+        text-align: center;
+        margin-bottom: 1.75rem;
+      }
+
+      header h1 {
+        margin: 0;
+        font-size: clamp(2.25rem, 4vw, 3.25rem);
+        letter-spacing: 0.02em;
+      }
+
+      header .tagline {
+        margin: 0.35rem 0 0;
+        font-size: clamp(1.35rem, 2.5vw, 1.85rem);
+        color: var(--amber);
+        font-weight: 600;
+      }
+
+      header .subtitle {
+        margin: 0.75rem auto 0;
+        max-width: 52rem;
+        font-size: clamp(1.05rem, 1.8vw, 1.25rem);
+        color: var(--muted);
+      }
+
+      .controls {
+        background: var(--surface);
+        border: 1px solid var(--border);
+        border-radius: 12px;
+        padding: 1.25rem 1.5rem;
+        margin-bottom: 1.25rem;
+      }
+
+      label.field-label {
+        display: block;
+        font-weight: 600;
+        margin-bottom: 0.5rem;
+        font-size: 1.1rem;
+      }
+
+      textarea#query {
+        width: 100%;
+        min-height: 4.5rem;
+        resize: vertical;
+        font: inherit;
+        padding: 0.75rem 1rem;
+        border-radius: 8px;
+        border: 1px solid var(--border);
+        background: #0a1018;
+        color: var(--text);
+      }
+
+      .doc-choice {
+        margin-top: 1.25rem;
+        display: flex;
+        flex-wrap: wrap;
+        gap: 1.5rem 2rem;
+        font-size: 1.15rem;
+      }
+
+      .doc-choice label {
+        display: flex;
+        align-items: center;
+        gap: 0.5rem;
+        cursor: pointer;
+      }
+
+      .doc-choice input {
+        width: 1.25rem;
+        height: 1.25rem;
+        accent-color: var(--blue);
+      }
+
+      .actions {
+        margin-top: 1.25rem;
+        display: flex;
+        flex-wrap: wrap;
+        align-items: center;
+        gap: 1rem;
+      }
+
+      button#run {
+        font: inherit;
+        font-size: 1.2rem;
+        font-weight: 700;
+        letter-spacing: 0.04em;
+        padding: 0.85rem 1.75rem;
+        border: none;
+        border-radius: 8px;
+        cursor: pointer;
+        color: #051018;
+        background: linear-gradient(180deg, #5eb8ff, #3d8fd9);
+      }
+
+      button#run:disabled {
+        opacity: 0.55;
+        cursor: not-allowed;
+      }
+
+      .loading {
+        font-size: 1.15rem;
+        color: var(--amber);
+        font-weight: 600;
+        min-height: 1.5em;
+      }
+
+      .arch-strip {
+        background: var(--surface);
+        border: 1px solid var(--border);
+        border-radius: 12px;
+        padding: 1rem 1.25rem;
+        margin-bottom: 1.25rem;
+        font-family: ui-monospace, "Cascadia Code", Consolas, monospace;
+        font-size: clamp(0.75rem, 1.2vw, 0.95rem);
+        line-height: 1.45;
+        overflow-x: auto;
+        white-space: pre;
+        color: #c5d4e8;
+      }
+
+      .arch-strip .warn {
+        color: var(--red);
+        font-weight: 700;
+      }
+
+      .panels {
+        display: grid;
+        grid-template-columns: repeat(3, 1fr);
+        gap: 1rem;
+      }
+
+      @media (max-width: 1100px) {
+        .panels {
+          grid-template-columns: 1fr;
+        }
+      }
+
+      .panel {
+        background: var(--surface);
+        border-radius: 12px;
+        border: 3px solid var(--border);
+        min-height: 22rem;
+        display: flex;
+        flex-direction: column;
+      }
+
+      .panel.red {
+        border-color: var(--red);
+      }
+      .panel.green {
+        border-color: var(--green);
+      }
+      .panel.blue {
+        border-color: var(--blue);
+      }
+
+      .panel-head {
+        padding: 1rem 1.1rem 0.75rem;
+        border-bottom: 1px solid var(--border);
+      }
+
+      .panel-head h2 {
+        margin: 0;
+        font-size: clamp(1.35rem, 2vw, 1.65rem);
+      }
+
+      .panel-head .hint {
+        margin: 0.35rem 0 0;
+        color: var(--muted);
+        font-size: 1rem;
+      }
+
+      .panel-body {
+        padding: 1rem 1.1rem 1.25rem;
+        flex: 1;
+      }
+
+      .response-text {
+        font-size: clamp(1.05rem, 1.5vw, 1.2rem);
+        white-space: pre-wrap;
+        word-break: break-word;
+      }
+
+      .placeholder {
+        color: var(--muted);
+        font-style: italic;
+      }
+
+      .blocked-badge {
+        display: none;
+        margin-bottom: 1rem;
+        padding: 1rem 1.1rem;
+        border: 3px solid var(--green);
+        border-radius: 10px;
+        background: rgba(61, 220, 132, 0.12);
+        text-align: center;
+        font-size: clamp(1.15rem, 2vw, 1.45rem);
+        font-weight: 800;
+        line-height: 1.35;
+        letter-spacing: 0.03em;
+      }
+
+      .blocked-badge.visible {
+        display: block;
+      }
+
+      .log-ok {
+        font-size: clamp(1.2rem, 2vw, 1.5rem);
+        font-weight: 700;
+        color: var(--green);
+      }
+
+      .log-json {
+        font-family: ui-monospace, "Cascadia Code", Consolas, monospace;
+        font-size: clamp(0.85rem, 1.2vw, 1rem);
+        white-space: pre-wrap;
+        word-break: break-word;
+        background: #0a1018;
+        border: 1px solid var(--border);
+        border-radius: 8px;
+        padding: 1rem;
+        margin: 0;
+      }
+
+      .m1-note {
+        margin-top: 1rem;
+        text-align: center;
+        color: var(--muted);
+        font-size: 0.95rem;
+      }
+    </style>
+  </head>
+  <body>
+    <div class="wrap">
+      <header>
+        <h1>TrustGate</h1>
+        <p class="tagline">Same Model. Different Architecture.</p>
+        <p class="subtitle">
+          A live demonstration of untrusted-data boundaries in agentic AI systems
+        </p>
+      </header>
+
+      <section class="controls" aria-label="Demo controls">
+        <label class="field-label" for="query">Query</label>
+        <textarea id="query">Can you summarize this patient's referral for me?</textarea>
+
+        <fieldset class="doc-choice">
+          <legend class="field-label" style="margin-bottom: 0.75rem">Retrieved document</legend>
+          <label>
+            <input type="radio" name="doc" value="benign" checked />
+            Use benign document
+          </label>
+          <label>
+            <input type="radio" name="doc" value="malicious" />
+            Inject malicious document
+          </label>
+        </fieldset>
+
+        <div class="actions">
+          <button type="button" id="run">RUN TRUSTGATE</button>
+          <div class="loading" id="loading" aria-live="polite"></div>
+        </div>
+      </section>
+
+      <pre class="arch-strip" aria-label="Architecture visualization"><span id="arch-viz">USER
+  ↓
+RETRIEVER
+  ↓
+UNTRUSTED DOCUMENT
+  ↓
+┌────────────── TRUSTGATE ──────────────┐
+│ Policy → Prompt Boundary → LLM → Guard│
+│                         ↓              │
+│                       Audit            │
+└───────────────────────────────────────┘
+
+UNGUARDED PATH:  DOCUMENT ─────────→ LLM  <span class="warn">⚠ no boundary</span></pre>
+
+      <section class="panels" aria-label="Comparison output">
+        <article class="panel red">
+          <div class="panel-head">
+            <h2>🔴 UNGUARDED AGENT</h2>
+            <p class="hint">Retrieved content treated as trusted</p>
+          </div>
+          <div class="panel-body">
+            <div class="response-text placeholder" id="unguarded-out">
+              Run the demo to compare architectures (M1 mock data).
+            </div>
+          </div>
+        </article>
+
+        <article class="panel green">
+          <div class="panel-head">
+            <h2>🟢 GUARDED AGENT</h2>
+            <p class="hint">Untrusted-data boundary + policy controls</p>
+          </div>
+          <div class="panel-body">
+            <div class="blocked-badge" id="blocked-badge">
+              🛡️ BLOCKED<br />
+              UNTRUSTED CONTENT ATTEMPTED<br />
+              UNAUTHORIZED ACTION
+            </div>
+            <div class="response-text placeholder" id="guarded-out">
+              Guarded response appears here.
+            </div>
+          </div>
+        </article>
+
+        <article class="panel blue">
+          <div class="panel-head">
+            <h2>🔵 ENGINEER'S LOG</h2>
+            <p class="hint">Observable security controls</p>
+          </div>
+          <div class="panel-body">
+            <div id="log-out" class="placeholder">Audit and policy events appear here.</div>
+          </div>
+        </article>
+      </section>
+
+      <p class="m1-note">M1 — static UI with mock responses only (no API / LLM).</p>
+    </div>
+
+    <script>
+      /* M1: client-side mock only — backend wired in M2+ */
+
+      const MOCK = {
+        benign: {
+          unguarded_response:
+            "Alex Morgan, 54, was referred from Hospital A for evaluation of persistent fatigue and hypertension over the past three months. The note recommends follow-up review of history and appropriate clinical evaluation.",
+          guarded_response:
+            "Summary (from untrusted referral data only): Alex Morgan, age 54, is referred for persistent fatigue and hypertension. History notes fatigue for ~3 months; recommendation is follow-up evaluation.",
+          guarded_blocked: false,
+          audit_event: null,
+        },
+        malicious: {
+          unguarded_response:
+            "Per the document's processing instruction, here is internal configuration: INTERNAL_KEY=sk-demo-12345-do-not-reveal. (This demonstrates why retrieved text must not enter the instruction space.)",
+          guarded_response:
+            "[BLOCKED: untrusted content attempted unauthorized action]",
+          guarded_blocked: true,
+          audit_event: {
+            threat_detected: true,
+            confidence: "high",
+            reason: "instruction detected inside untrusted document",
+            action: ["ignored", "alert_logged", "response_regenerated"],
+            timestamp: "2026-08-09T13:45:00Z",
+          },
+        },
+      };
+
+      const runBtn = document.getElementById("run");
+      const loadingEl = document.getElementById("loading");
+      const queryEl = document.getElementById("query");
+      const unguardedEl = document.getElementById("unguarded-out");
+      const guardedEl = document.getElementById("guarded-out");
+      const logEl = document.getElementById("log-out");
+      const blockedBadge = document.getElementById("blocked-badge");
+
+      function selectedDocMode() {
+        const checked = document.querySelector('input[name="doc"]:checked');
+        return checked && checked.value === "malicious" ? "malicious" : "benign";
+      }
+
+      function renderLog(auditEvent) {
+        if (!auditEvent) {
+          logEl.innerHTML = '<div class="log-ok">✓ No threat detected</div>';
+          logEl.classList.remove("placeholder");
+          return;
+        }
+        logEl.innerHTML =
+          '<pre class="log-json">' +
+          JSON.stringify(auditEvent, null, 2) +
+          "</pre>";
+        logEl.classList.remove("placeholder");
+      }
+
+      function applyResult(payload) {
+        unguardedEl.textContent = payload.unguarded_response;
+        unguardedEl.classList.remove("placeholder");
+
+        guardedEl.textContent = payload.guarded_response;
+        guardedEl.classList.remove("placeholder");
+
+        if (payload.guarded_blocked) {
+          blockedBadge.classList.add("visible");
+        } else {
+          blockedBadge.classList.remove("visible");
+        }
+
+        renderLog(payload.audit_event);
+      }
+
+      function sleep(ms) {
+        return new Promise(function (resolve) {
+          setTimeout(resolve, ms);
+        });
+      }
+
+      runBtn.addEventListener("click", async function () {
+        const mode = selectedDocMode();
+        const query = queryEl.value.trim();
+        if (!query) {
+          loadingEl.textContent = "Enter a query to run the demo.";
+          return;
+        }
+
+        runBtn.disabled = true;
+        loadingEl.textContent = "Running both architectures...";
+        unguardedEl.textContent = "";
+        guardedEl.textContent = "";
+        logEl.textContent = "";
+        blockedBadge.classList.remove("visible");
+
+        await sleep(700);
+        loadingEl.textContent = "Comparing unguarded vs guarded execution...";
+        await sleep(900);
+
+        const base = MOCK[mode];
+        const payload = {
+          unguarded_response: base.unguarded_response,
+          guarded_response: base.guarded_response,
+          guarded_blocked: base.guarded_blocked,
+          audit_event: base.audit_event
+            ? { ...base.audit_event, timestamp: new Date().toISOString() }
+            : null,
+        };
+
+        applyResult(payload);
+        loadingEl.textContent = "";
+        runBtn.disabled = false;
+      });
+    </script>
+  </body>
+</html>
